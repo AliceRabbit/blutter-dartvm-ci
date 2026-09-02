@@ -1,0 +1,74 @@
+name: build-blutter
+on:
+  workflow_dispatch:
+    inputs:
+      dart_version:
+        description: 'Dart version of the target snapshot'
+        required: true
+        default: '3.9.0'
+      snapshot_hash:
+        description: 'Snapshot hash (32 hex chars, from libapp.so _kDartVmSnapshotData+20)'
+        required: true
+        default: '97ff04a728735e6b6b098bdf983faaba'
+      source_repo:
+        description: 'blutter source repository'
+        required: false
+        default: 'worawit/blutter'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install python deps
+        run: pip install requests pyelftools
+
+      - name: Clone blutter source
+        run: git clone --depth 1 https://github.com/${{ github.event.inputs.source_repo }}.git blutter
+
+      - name: Init windows libraries (icu + capstone)
+        working-directory: blutter
+        run: python scripts/init_env_win.py
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache Dart SDK build
+        uses: actions/cache@v4
+        with:
+          path: |
+            blutter/dartsdk
+            blutter/packages
+            blutter/build
+          key: dartvm-${{ github.event.inputs.dart_version }}-${{ runner.os }}
+
+      - name: Fetch and build Dart VM
+        working-directory: blutter
+        run: python dartvm_fetch_build.py ${{ github.event.inputs.dart_version }} android arm64 ${{ github.event.inputs.snapshot_hash }}
+
+      - name: Build blutter
+        working-directory: blutter
+        run: |
+          cmake -GNinja -Bbuild -DDARTLIB=dartvm${{ github.event.inputs.dart_version }}_android_arm64 -DCMAKE_BUILD_TYPE=Release
+          ninja -C build
+
+      - name: Package binary and DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $exe = Get-ChildItem -Path blutter/build -Recurse -Filter "blutter_dartvm${{ github.event.inputs.dart_version }}_android_arm64.exe" | Select-Object -First 1
+          if (-not $exe) { throw "blutter exe not found" }
+          Copy-Item $exe.FullName dist/
+          if (Test-Path blutter/external/capstone) { Copy-Item blutter/external/capstone/*.dll dist/ -ErrorAction SilentlyContinue }
+          Get-ChildItem blutter/external/icu-windows -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName dist/ }
+          Get-ChildItem dist | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blutter-dartvm${{ github.event.inputs.dart_version }}-win64
+          path: dist/*
