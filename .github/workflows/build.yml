@@ -69,7 +69,7 @@ jobs:
               Rename-Item $d.FullName ($d.Name -replace [regex]::Escape($lib), $safe)
             }
           }
-          cmake -GNinja -Bbuild -Sblutter -DDARTLIB=$safe -DCMAKE_BUILD_TYPE=Release
+          cmake -GNinja -Bbuild -Sblutter "-DDARTLIB=$safe" -DCMAKE_BUILD_TYPE=Release
           ninja -C build
 
       - name: Package binary and DLLs
