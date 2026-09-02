@@ -53,8 +53,23 @@ jobs:
 
       - name: Build blutter
         working-directory: blutter
+        shell: pwsh
         run: |
-          cmake -GNinja -Bbuild -Sblutter -DDARTLIB=dartvm${{ github.event.inputs.dart_version }}_android_arm64 -DCMAKE_BUILD_TYPE=Release
+          $lib = "dartvm${{ github.event.inputs.dart_version }}_android_arm64"
+          $safe = $lib -replace '\.', ''
+          if (Test-Path "packages") {
+            $items = Get-ChildItem packages -Recurse -Filter "*$lib*"
+            # 先改文件(内容+名字),再改目录
+            foreach ($f in ($items | Where-Object { -not $_.PSIsContainer })) {
+              $t = Get-Content $f.FullName -Raw
+              if ($t -match [regex]::Escape($lib)) { Set-Content $f.FullName ($t -replace [regex]::Escape($lib), $safe) -NoNewline }
+              if ($f.Name -like "*$lib*") { Rename-Item $f.FullName ($f.Name -replace [regex]::Escape($lib), $safe) }
+            }
+            foreach ($d in ($items | Where-Object { $_.PSIsContainer } | Sort-Object { $_.FullName.Length } -Descending)) {
+              Rename-Item $d.FullName ($d.Name -replace [regex]::Escape($lib), $safe)
+            }
+          }
+          cmake -GNinja -Bbuild -Sblutter -DDARTLIB=$safe -DCMAKE_BUILD_TYPE=Release
           ninja -C build
 
       - name: Package binary and DLLs
