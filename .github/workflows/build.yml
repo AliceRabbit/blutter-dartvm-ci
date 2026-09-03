@@ -58,17 +58,19 @@ jobs:
           $lib = "dartvm${{ github.event.inputs.dart_version }}_android_arm64"
           $safe = $lib -replace '\.', ''
           if (Test-Path "packages") {
-            $items = Get-ChildItem packages -Recurse -Filter "*$lib*"
-            # 先改文件(内容+名字),再改目录
-            foreach ($f in ($items | Where-Object { -not $_.PSIsContainer })) {
-              $t = Get-Content $f.FullName -Raw
-              if ($t -match [regex]::Escape($lib)) { Set-Content $f.FullName ($t -replace [regex]::Escape($lib), $safe) -NoNewline }
-              if ($f.Name -like "*$lib*") { Rename-Item $f.FullName ($f.Name -replace [regex]::Escape($lib), $safe) }
+            # 1) 替换所有文本文件内容(跳过二进制 .lib/.dll/.a)
+            Get-ChildItem packages -Recurse -File -Include *.cmake,*.txt,*.cps,*.h | ForEach-Object {
+              $t = Get-Content $_.FullName -Raw
+              if ($t -and $t.Contains($lib)) { [System.IO.File]::WriteAllText($_.FullName, $t.Replace($lib, $safe)) }
             }
-            foreach ($d in ($items | Where-Object { $_.PSIsContainer } | Sort-Object { $_.FullName.Length } -Descending)) {
-              Rename-Item $d.FullName ($d.Name -replace [regex]::Escape($lib), $safe)
-            }
+            # 2) 改目录(深的先改),再改文件名
+            Get-ChildItem packages -Recurse -Directory | Where-Object { $_.Name -like "*$lib*" } |
+              Sort-Object { $_.FullName.Length } -Descending |
+              ForEach-Object { Rename-Item $_.FullName $_.Name.Replace($lib, $safe) }
+            Get-ChildItem packages -Recurse -File | Where-Object { $_.Name -like "*$lib*" } |
+              ForEach-Object { Rename-Item $_.FullName $_.Name.Replace($lib, $safe) }
           }
+          Write-Host "DARTLIB=$safe"
           cmake -GNinja -Bbuild -Sblutter "-DDARTLIB=$safe" -DCMAKE_BUILD_TYPE=Release
           ninja -C build
 
